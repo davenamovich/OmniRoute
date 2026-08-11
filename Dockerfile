@@ -95,15 +95,19 @@ RUN --mount=type=cache,id=npm-cache,target=/root/.npm \
   && (test -n "$(find node_modules/tls-client-node/bin -mindepth 1 -print -quit 2>/dev/null)" \
       || (echo "tls-client-node native binary missing after postinstall — GitHub API fetch likely rate-limited or failed (#7802)" >&2 && exit 1))
 
-# Build with Turbopack (stable in Next 16, the repo default). The v3.8.27-era
-# TurbopackInternalError panic ("entered unreachable code: there must be a path to a
-# root" in ImportTracer::get_traces) no longer reproduces on Next 16.2.9 — validated
-# 2026-07-05 with clean amd64 (12min14s, image smoke-tested: /api/monitoring/health
-# 200) and arm64 (qemu, exit 0, zero panic strings) builds. Turbopack cut the bare
-# build from 17min to 9min on the same 32-core box. Webpack stays available as the
-# escape hatch: `--build-arg`/-e OMNIROUTE_USE_TURBOPACK=0.
-# See docs/ops/QUALITY_GATE_PLAYBOOK.md Parte 6.
-ENV OMNIROUTE_USE_TURBOPACK=1
+# Build with WEBPACK, NOT Turbopack. On Next 16.2.12 (the pinned lockfile
+# version) Turbopack's bundled regex-automata hybrid DFA panics with "reverse
+# search must match if forward search does" (regex.rs:497) while resolving the
+# Fumadocs docs collection — the worker dies ("failed to receive message"), the
+# in-flight docs imports are misreported as "Module not found", and the build
+# fails deterministically 2/2. It is an upstream Turbopack bug, not a project
+# one; the migrationRunner dynamic glob (matches 10743 files) is the likely
+# trigger. Webpack is the config that ran green on Railway for a month and is
+# the validated path for the better-sqlite3 SIGABRT fix (stub + worker cap +
+# retry). Slower (~17min vs ~9min) but deterministic. Turbopack can still be
+# opted back in with `--build-arg`/-e OMNIROUTE_USE_TURBOPACK=1 when upstream
+# fixes the panic.
+ENV OMNIROUTE_USE_TURBOPACK=0
 
 # Next.js basePath is fixed at build time; pass OMNIROUTE_BASE_PATH here when the
 # image should serve under a reverse-proxy subpath without a runtime patch.
@@ -124,7 +128,10 @@ ENV OMNIROUTE_MITM_STUB=1
 # child (build-next-isolated.mjs → resolveNextBuildEnv spreads process.env).
 # Build-only; the runtime heap is set separately on the runner stage
 # (OMNIROUTE_MEMORY_MB). Override: `--build-arg OMNIROUTE_BUILD_MEMORY_MB=6144`.
-ARG OMNIROUTE_BUILD_MEMORY_MB=4096
+# MUST be 6144 for the webpack build: the production optimization pass on this
+# codebase OOMs at 4096 ("FATAL ERROR: Ineffective mark-compacts near heap limit")
+# — same value main validated with.
+ARG OMNIROUTE_BUILD_MEMORY_MB=6144
 ENV NODE_OPTIONS="--max-old-space-size=${OMNIROUTE_BUILD_MEMORY_MB}"
 
 # Cap Next.js build worker pools. Next 16 defaults to `os.cpus().length - 1`

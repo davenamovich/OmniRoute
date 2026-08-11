@@ -127,7 +127,12 @@ ENV OMNIROUTE_MITM_STUB=1
 # codebase OOMs at 4096 ("FATAL ERROR: Ineffective mark-compacts near heap limit")
 # — same value main validated with.
 ARG OMNIROUTE_BUILD_MEMORY_MB=6144
-ENV NODE_OPTIONS="--max-old-space-size=${OMNIROUTE_BUILD_MEMORY_MB}"
+# Hardcoded (NOT ${ARG}-interpolated): Railway injects service build variables as
+# Docker build args, which override the ARG default and silently poison the build
+# heap back to 4096 — observed as "Mark-Compact 3862.6 (4141.7) MB" OOM during
+# webpack Compiling (GC ceiling exactly 4096 MB) even though the ARG/variable say
+# 6144. The literal value cannot be overridden by build args.
+ENV NODE_OPTIONS="--max-old-space-size=6144"
 
 # Cap Next.js build worker pools. Next 16 defaults to `os.cpus().length - 1`
 # workers (31 on a 32-core builder) for page-data collection; on memory-tight

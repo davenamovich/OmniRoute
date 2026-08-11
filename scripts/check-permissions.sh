@@ -29,8 +29,8 @@ if [ "$(id -u)" = "0" ]; then
     chown -R node:node "$DATA_PATH" 2>/dev/null || true
     chmod -R u+rwX "$DATA_PATH" 2>/dev/null || true
   fi
-  if [ -d "$DATA_PATH" ] && [ ! -w "$DATA_PATH" ]; then
-    echo "WARNING: $DATA_PATH still not writable after chown — check the volume mount."
+  if [ -d "$DATA_PATH" ] && [ "$(stat -c '%u' "$DATA_PATH" 2>/dev/null)" != "1000" ]; then
+    echo "WARNING: $DATA_PATH still not owned by node (UID 1000) after chown — check the volume mount."
   fi
 else
   # Non-root invocation (docker run --user, Kubernetes runAsNonRoot, ...):

@@ -285,6 +285,8 @@ RUN apt-get update \
   && chown -R node:node /home/node/.cache \
   && rm -rf /var/lib/apt/lists/*
 
+# Final USER is root so the shared ENTRYPOINT (check-permissions.sh) can
+# chown the volume; it drops to `node` before running the inherited CMD.
 USER root
 
 FROM runner-base AS runner-cli

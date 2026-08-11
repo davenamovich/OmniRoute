@@ -145,6 +145,11 @@ export function resolveNextBuildEnv(baseEnv = process.env, platform = process.pl
   const env = {
     ...baseEnv,
     NEXT_PRIVATE_BUILD_WORKER: baseEnv.NEXT_PRIVATE_BUILD_WORKER || "0",
+    // Build signal for Next.js worker threads (page-data workers drop
+    // NEXT_PHASE from process.env). Every DB entry point checks it to route to
+    // the no-op stub so the native better-sqlite3 addon never loads during the
+    // build (its Statement destructor SIGABRTs at worker teardown).
+    OMNIROUTE_BUILDING: "1",
   };
 
   // Windows-only: `next build`'s static-generation glob scan and framework cache

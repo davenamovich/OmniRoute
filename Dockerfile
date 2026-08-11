@@ -1,6 +1,14 @@
 # ── Common base with runtime deps ──────────────────────────────────────────
-FROM node:26-trixie-slim AS base
+# Base image PINNED to node:22.23.1-bookworm-slim. The 2026-08-10 Railway
+# outage: the floating node:26/node:22 tag drifted and better-sqlite3's Statement
+# destructor SIGABRT'd Next.js page-data workers during next build (a
+# node::RemoveEnvironmentCleanupHook assertion). The guard fails the build if the
+# image ever drifts — bump FROM and this guard together.
+FROM node:22.23.1-bookworm-slim AS base
 WORKDIR /app
+
+RUN node --version | grep -qx "v22.23.1" \
+  || { echo "Base image Node version drifted: expected v22.23.1, got $(node --version). Update Dockerfile FROM + guard together." >&2; exit 1; }
 
 # `apt-get upgrade` pulls the security-patched versions of the Debian (trixie)
 # base-image packages at build time — clears the subset of container-scan CVEs
@@ -15,13 +23,15 @@ RUN --mount=type=cache,id=apt-cache,target=/var/cache/apt,sharing=locked \
   && apt-get install -y --no-install-recommends libsecret-1-0 ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-# Refresh the globally-installed npm so its *bundled* node_modules (undici, tar)
-# ship the patched versions. These are npm's own internals — not application
-# dependencies (our app already resolves undici@8.5.0 / tar@7.5.16, both fixed) —
-# but the container scanner flags the stale copies under
-# /usr/local/lib/node_modules/npm/node_modules. npm is not invoked at runtime in
-# the runner stages, so this is hygiene, not an exploitable runtime path.
-RUN npm install -g npm@latest \
+# Pinned to npm@11.19.0 (the last 11.x line), NOT npm 12: npm 12's allowScripts
+# policy blocks npm rebuild/node-gyp install scripts by default, so the
+# better-sqlite3 native binary is never built and the build fails with "Could not
+# locate the bindings file". 11.x runs rebuild scripts normally. Also refreshes
+# npm's *bundled* node_modules (undici, tar) to patched versions — npm's own
+# internals, hygiene not an exploitable runtime path (npm is not invoked at
+# runtime in the runner stages).
+RUN npm install -g npm@11.19.0 \
+  && test "$(npm --version)" = "11.19.0" \
   && npm cache clean --force
 
 # ── Builder ────────────────────────────────────────────────────────────────
@@ -117,9 +127,43 @@ ENV OMNIROUTE_MITM_STUB=1
 ARG OMNIROUTE_BUILD_MEMORY_MB=4096
 ENV NODE_OPTIONS="--max-old-space-size=${OMNIROUTE_BUILD_MEMORY_MB}"
 
+# Cap Next.js build worker pools. Next 16 defaults to `os.cpus().length - 1`
+# workers (31 on a 32-core builder) for page-data collection; on memory-tight
+# hosts 31 workers + the build heap blow past RAM and a worker dies with SIGSEGV
+# at teardown ("worker exited with code: null and signal: SIGSEGV"), silently
+# leaving no standalone bundle. Next derives the default worker count from
+# CIRCLE_NODE_TOTAL (workers = N-1), so N=8 -> 7 workers: fast enough while
+# fitting comfortably in RAM on any host.
+ENV CIRCLE_NODE_TOTAL=8
+
 COPY . ./
+# The native addon is hidden while `npm run build` runs: build-time code that
+# evaluates the driver — Next.js page-data workers load route modules natively,
+# and OMNIROUTE_BUILDING=1 routes every DB entry point to a no-op stub — can then
+# never load the addon, whose Statement destructor aborts with SIGABRT during
+# worker teardown (node::RemoveEnvironmentCleanupHook assertion, env == nullptr).
+# The npm-ci smoke test above is safe (opens :memory: and closes immediately,
+# zero Statements). The mv-restore puts the binary back before the runner stages
+# COPY it; the runner's `COPY --from=builder .../better-sqlite3` (AFTER the
+# standalone COPY) guarantees the complete package lands in the image.
 RUN --mount=type=cache,id=next-cache,target=/app/.build/next/cache \
-  mkdir -p /app/data && npm run build
+  mkdir -p /app/data \
+  && ( mv /app/node_modules/better-sqlite3/build/Release/better_sqlite3.node \
+       /app/node_modules/better-sqlite3/build/Release/better_sqlite3.node.build-hide 2>/dev/null || true ) \
+  && ( npm run build ; \
+       # next build can exit 0 even when a page-data worker crashed (intermittent
+       # SIGSEGV during teardown on memory-tight hosts; the standalone bundle is
+       # then never emitted). Retry once if the standalone output is missing,
+       # then fail loudly — this also stops the broken layer from being cached
+       # as a success.
+       if [ ! -d /app/.build/next/standalone ]; then \
+         echo "Retrying next build: no standalone emitted (intermittent worker SIGSEGV during page-data collection)" ; \
+         npm run build ; \
+       fi ; \
+       test -d /app/.build/next/standalone \
+         || { echo "ERROR: next build produced no standalone after retry — worker crash is persistent (check the node:22.23.1 pin)." >&2 ; exit 1 ; } ) \
+  && ( mv /app/node_modules/better-sqlite3/build/Release/better_sqlite3.node.build-hide \
+       /app/node_modules/better-sqlite3/build/Release/better_sqlite3.node 2>/dev/null || true )
 
 # ── Runner base ────────────────────────────────────────────────────────────
 FROM base AS runner-base
@@ -174,12 +218,20 @@ RUN chown -R node:node /app
 
 EXPOSE 20128
 
+# Warns if the mounted data volume has wrong ownership
+COPY --chmod=755 scripts/check-permissions.sh /tmp/check-permissions.sh
+# Belt-and-suspenders: strip CR from the entrypoint even if the build context
+# came from a CRLF checkout (Windows + core.autocrlf without .gitattributes
+# honoring). A CRLF shebang ("#!/bin/sh\r") makes kernel exec fail with
+# `exec /tmp/check-permissions.sh: no such file or directory`. Runs before
+# `USER node` because sed -i renames a temp file over the target, which fails
+# with EPERM under the sticky-bit /tmp for the non-root user.
+RUN sed -i 's/\r$//' /tmp/check-permissions.sh
+
 # Drop to non-root before ENTRYPOINT/CMD so every derived stage (runner-cli,
 # runner-web) also runs as a non-root user unless they explicitly switch back.
 USER node
 
-# Warns if the mounted data volume has wrong ownership
-COPY --chmod=755 scripts/check-permissions.sh /tmp/check-permissions.sh
 ENTRYPOINT ["/tmp/check-permissions.sh"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

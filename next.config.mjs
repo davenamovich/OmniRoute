@@ -123,6 +123,11 @@ const nextConfig = {
       // start for all non-Docker users (#6344). See scripts/build/mitm-stub-flag.mjs.
       ...mitmManagerAliasFor(process.env),
       ...minimalBuildAliases,
+      // better-sqlite3 → no-op stub during builds so Next.js page-data workers
+      // never load the native addon (Statement destructor SIGABRTs at worker
+      // teardown on some Node versions). Workers drop NEXT_PHASE; the
+      // OMNIROUTE_BUILDING=1 signal set by build-next-isolated covers them.
+      "better-sqlite3": "./src/lib/db/better-sqlite3.stub.js",
     },
     // src/lib/agentSkills/generator.ts builds its fs base path from a runtime
     // `outputDir` parameter (`path.join(process.cwd(), outputDir)`), which is

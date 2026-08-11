@@ -92,6 +92,12 @@ function queryDb(query: string, params: unknown[] = []): CodeGraphQueryResult {
 
       // Use better-sqlite3 if available
       try {
+        const isBuild =
+          process.env.NEXT_PHASE === "phase-production-build" ||
+          process.env.OMNIROUTE_BUILDING === "1" ||
+          process.env.npm_lifecycle_event === "build";
+        if (isBuild) throw new Error("Skip better-sqlite3 in build");
+
         const Database = require("better-sqlite3");
         _db = new Database(dbPath, { readonly: true });
       } catch {

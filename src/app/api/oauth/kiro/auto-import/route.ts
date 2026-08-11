@@ -85,6 +85,11 @@ async function tryKiroCliSqlite(): Promise<{
 
   let Database: any;
   try {
+    const isBuild =
+      process.env.NEXT_PHASE === "phase-production-build" ||
+      process.env.OMNIROUTE_BUILDING === "1" ||
+      process.env.npm_lifecycle_event === "build";
+    if (isBuild) throw new Error("Skip better-sqlite3 in build");
     Database = (await import("better-sqlite3")).default;
   } catch {
     return { found: false, triedPaths: candidatePaths };

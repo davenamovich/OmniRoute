@@ -82,7 +82,9 @@ type CriticalTableSpec = {
 
 export const isCloud = typeof globalThis.caches === "object" && globalThis.caches !== null;
 
-export const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build";
+export const isBuildPhase =
+  process.env.NEXT_PHASE === "phase-production-build" ||
+  process.env.OMNIROUTE_BUILDING === "1";
 
 // ──────────────── Paths ────────────────
 

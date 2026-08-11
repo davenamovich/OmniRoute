@@ -110,8 +110,19 @@ export function createSyncDriverFactory(load: DriverLoader) {
       }
     }
 
-    // better-sqlite3: rápido, nativo — skip em Bun
-    if (!process.versions.bun) {
+    // During the build (Next.js page-data workers) skip the native addon — its
+    // Statement destructor SIGABRTs at worker teardown on some Node versions.
+    // NEXT_PHASE is the primary signal; OMNIROUTE_BUILDING=1 covers workers that
+    // drop it. Deliberately NOT checking isMainThread: at runtime many worker
+    // threads (pino thread-stream, compression workers) legitimately use
+    // better-sqlite3, and skipping it there would silently degrade them to
+    // node:sqlite / sql.js in production.
+    const isBuild =
+      process.env.NEXT_PHASE === "phase-production-build" ||
+      process.env.OMNIROUTE_BUILDING === "1" ||
+      process.env.npm_lifecycle_event === "build";
+    // better-sqlite3: rápido, nativo — skip em Bun e no build
+    if (!process.versions.bun && !isBuild) {
       try {
         const BetterSqlite = load("better-sqlite3") as {
           new (p: string, o?: object): import("better-sqlite3").Database;

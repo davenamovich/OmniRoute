@@ -224,7 +224,7 @@ RUN chown -R node:node /app
 
 EXPOSE 20128
 
-# Warns if the mounted data volume has wrong ownership
+# FIXES data-volume ownership when running as root (chown -R to node), warns otherwise — see scripts/check-permissions.sh
 COPY --chmod=755 scripts/check-permissions.sh /tmp/check-permissions.sh
 # Belt-and-suspenders: strip CR from the entrypoint even if the build context
 # came from a CRLF checkout (Windows + core.autocrlf without .gitattributes
@@ -234,9 +234,11 @@ COPY --chmod=755 scripts/check-permissions.sh /tmp/check-permissions.sh
 # with EPERM under the sticky-bit /tmp for the non-root user.
 RUN sed -i 's/\r$//' /tmp/check-permissions.sh
 
-# Drop to non-root before ENTRYPOINT/CMD so every derived stage (runner-cli,
-# runner-web) also runs as a non-root user unless they explicitly switch back.
-USER node
+# The final USER is root so this ENTRYPOINT can fix a root-owned data
+# volume (Docker named volumes / Railway volumes mount as root) before
+# dropping to the `node` user itself (setpriv in check-permissions.sh).
+# The server process never holds root privileges.
+USER root
 
 ENTRYPOINT ["/tmp/check-permissions.sh"]
 
@@ -283,13 +285,13 @@ RUN apt-get update \
   && chown -R node:node /home/node/.cache \
   && rm -rf /var/lib/apt/lists/*
 
-USER node
+USER root
 
 FROM runner-base AS runner-cli
 
-# Drop back to root briefly so we can install system + global npm packages,
-# then return to the `node` non-root user before the CMD inherited from
-# runner-base runs.
+# Drop back to root briefly so we can install system + global npm packages.
+# The final USER stays root — the shared ENTRYPOINT (check-permissions.sh)
+# drops to `node` before running the inherited CMD.
 USER root
 
 # Install system dependencies required by openclaw (git+ssh references).
@@ -301,4 +303,5 @@ RUN apt-get update \
 # Install CLI tools globally. Separate layer from apt for better cache reuse.
 RUN npm install -g --no-audit --no-fund @openai/codex @anthropic-ai/claude-code droid openclaw@latest
 
-USER node
+USER root
+

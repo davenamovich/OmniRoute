@@ -1,3 +1,4 @@
+# ── Cache-bust: 2026-09-02T20:00 — migrates web providers from tls-client-node to wreq-js (fixes #7802) ──
 # ── Common base with runtime deps ──────────────────────────────────────────
 FROM node:22.23.1-bookworm-slim AS base
 WORKDIR /app

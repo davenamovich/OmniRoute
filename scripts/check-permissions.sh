@@ -17,6 +17,32 @@ fi
 
 DATA_PATH="${DATA_DIR:-/app/data}"
 
+# ── Auto-heal malformed SQLite database on mounted volume ──────────────
+if [ -f "$DATA_PATH/storage.sqlite" ]; then
+  node -e '
+    const fs = require("fs");
+    const dbPath = process.argv[1];
+    try {
+      const Database = require("better-sqlite3");
+      const db = new Database(dbPath, { fileMustExist: true });
+      db.prepare("PRAGMA integrity_check").get();
+      db.close();
+    } catch (e) {
+      const msg = e && e.message ? e.message : String(e);
+      if (msg.includes("malformed") || msg.includes("corrupt")) {
+        const backup = dbPath + ".corrupt." + Date.now();
+        console.warn("[check-permissions] Quarantining malformed database (" + msg + ") to " + backup);
+        try { fs.renameSync(dbPath, backup); } catch (_) {}
+        for (const ext of ["-wal", "-shm", "-journal"]) {
+          if (fs.existsSync(dbPath + ext)) {
+            try { fs.renameSync(dbPath + ext, backup + ext); } catch (_) {}
+          }
+        }
+      }
+    }
+  ' "$DATA_PATH/storage.sqlite" 2>/dev/null || true
+fi
+
 # ── Data volume ownership ──────────────────────────────────────────────
 # Docker named volumes and Railway volumes mount as root, while the app
 # runs as the non-root `node` user (UID/GID 1000). The Dockerfile's final

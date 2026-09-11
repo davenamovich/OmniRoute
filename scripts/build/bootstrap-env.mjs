@@ -107,6 +107,22 @@ function hasEncryptedCredentials(dataDir) {
     }
 
     const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("malformed") || message.includes("corrupt") || message.includes("disk I/O error")) {
+      console.warn(`[bootstrap] Existing database at ${dbPath} is malformed (${message}). Quarantining corrupted file and starting fresh.`);
+      try {
+        const backup = `${dbPath}.corrupt.${Date.now()}`;
+        renameSync(dbPath, backup);
+        for (const ext of ["-wal", "-shm", "-journal"]) {
+          if (existsSync(dbPath + ext)) {
+            try { renameSync(dbPath + ext, `${backup}${ext}`); } catch (_) {}
+          }
+        }
+      } catch (backupErr) {
+        console.warn(`[bootstrap] Failed to rename malformed database: ${backupErr.message}`);
+      }
+      return false;
+    }
+
     throw new Error(`Unable to inspect existing database at ${dbPath}: ${message}`);
   }
 }

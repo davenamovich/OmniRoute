@@ -4,11 +4,11 @@
 # destructor SIGABRT'd Next.js page-data workers during next build (a
 # node::RemoveEnvironmentCleanupHook assertion). The guard fails the build if the
 # image ever drifts — bump FROM and this guard together.
-FROM node:22.23.1-bookworm-slim AS base
+FROM node:24-bookworm-slim AS base
 WORKDIR /app
 
-RUN node --version | grep -qx "v22.23.1" \
-  || { echo "Base image Node version drifted: expected v22.23.1, got $(node --version). Update Dockerfile FROM + guard together." >&2; exit 1; }
+RUN node --version | grep -E '^v24\.' \
+  || { echo "Base image Node version drifted: expected v24.x, got $(node --version). Update Dockerfile FROM + guard together." >&2; exit 1; }
 
 # `apt-get upgrade` pulls the security-patched versions of the Debian (trixie)
 # base-image packages at build time — clears the subset of container-scan CVEs
@@ -167,7 +167,7 @@ RUN mkdir -p /app/data \
          npm run build ; \
        fi ; \
        test -d /app/.build/next/standalone \
-         || { echo "ERROR: next build produced no standalone after retry — worker crash is persistent (check the node:22.23.1 pin)." >&2 ; exit 1 ; } ) \
+         || { echo "ERROR: next build produced no standalone after retry — worker crash is persistent (check the node:24-bookworm-slim pin)." >&2 ; exit 1 ; } ) \
   && ( mv /app/node_modules/better-sqlite3/build/Release/better_sqlite3.node.build-hide \
        /app/node_modules/better-sqlite3/build/Release/better_sqlite3.node 2>/dev/null || true )
 
